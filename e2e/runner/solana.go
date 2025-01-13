@@ -142,7 +142,7 @@ func (r *E2ERunner) CreateSignedTransaction(
 	additionalPrivateKeys []solana.PrivateKey,
 ) *solana.Transaction {
 	// get a recent blockhash
-	recent, err := r.SolanaClient.GetLatestBlockhash(r.Ctx, rpc.CommitmentFinalized)
+	recent, err := r.SolanaClient.GetLatestBlockhash(r.Ctx, rpc.CommitmentConfirmed)
 	require.NoError(r, err)
 
 	// create the initialize transaction
@@ -341,7 +341,7 @@ func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signatur
 
 	var (
 		start   = time.Now()
-		timeout = 2 * time.Minute // Solana tx expires automatically after 2 minutes
+		timeout = 10 * time.Second // Retry if not confirmed in 10s
 	)
 
 	// wait for the transaction to be finalized
@@ -353,7 +353,7 @@ func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signatur
 			break
 		}
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(2 * time.Second)
 		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{})
 		if err == nil {
 			isConfirmed = true
@@ -383,8 +383,12 @@ func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *
 		r.Logger.Info("fee", f.PrioritizationFee)
 	}
 
+	start := time.Now()
+	timeout := 2 * time.Minute // Expires after 2 mins
 	sig, out, isConfirmed := r.BroadcastTxSyncOnce(tx)
 	for {
+		require.False(r, time.Since(start) > timeout, "solana tx timeout")
+
 		if isConfirmed {
 			r.Logger.Info("tx broadcasted and confirmed")
 			return sig, out
