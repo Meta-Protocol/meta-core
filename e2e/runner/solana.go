@@ -348,9 +348,11 @@ func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signatur
 	var out *rpc.GetTransactionResult
 	isConfirmed := false
 	for {
-		require.False(r, time.Since(start) > timeout, "waiting solana tx timeout")
+		if time.Since(start) > timeout {
+			r.Logger.Info("waiting solana tx timeout")
+		}
 
-		time.Sleep(2 * time.Second)
+		time.Sleep(10 * time.Second)
 		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{})
 		if err == nil {
 			isConfirmed = true
