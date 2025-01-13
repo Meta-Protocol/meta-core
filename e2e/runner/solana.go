@@ -231,7 +231,7 @@ func (r *E2ERunner) SPLDepositAndCall(
 		data,
 	)
 
-	limit := computebudget.NewSetComputeUnitLimitInstruction(30000).Build() // 30k compute unit limit
+	limit := computebudget.NewSetComputeUnitLimitInstruction(50000).Build() // 50k compute unit limit
 	feesInit := computebudget.NewSetComputeUnitPriceInstructionBuilder().
 		SetMicroLamports(100000).Build() // 0.1 lamports per compute unit
 	signedTx := r.CreateSignedTransaction(
@@ -328,7 +328,7 @@ func (r *E2ERunner) DeploySPL(privateKey *solana.PrivateKey, whitelist bool) *so
 }
 
 // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
-func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult) {
+func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult, bool) {
 	// broadcast the transaction
 	r.Logger.Info("Broadcast start")
 	maxRetries := uint(0)
@@ -361,73 +361,36 @@ func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *
 	}
 
 	r.Logger.Info("broadcast once finished", sig, isConfirmed)
-	return sig, out
+	return sig, out, isConfirmed
 }
 
-// // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
-// func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult, bool) {
-// 	// broadcast the transaction
-// 	r.Logger.Info("Broadcast start")
-// 	maxRetries := uint(0)
-// 	sig, err := r.SolanaClient.SendTransactionWithOpts(r.Ctx, tx, rpc.TransactionOpts{
-// 		SkipPreflight: true,
-// 		MaxRetries:    &maxRetries,
-// 	})
-// 	require.NoError(r, err)
-// 	r.Logger.Info("broadcast success! tx sig %s; waiting for confirmation...", sig)
+// BroadcastTxSync broadcasts a transaction and waits for it to be finalized
+func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult) {
+	r.Logger.Info("Simulation start")
+	sim, err := r.SolanaClient.SimulateTransactionWithOpts(r.Ctx, tx, &rpc.SimulateTransactionOpts{})
+	require.NoError(r, err)
+	r.Logger.Info("simulation result", *sim.Value.UnitsConsumed)
 
-// 	var (
-// 		start   = time.Now()
-// 		timeout = 2 * time.Minute // Solana tx expires automatically after 2 minutes
-// 	)
+	r.Logger.Info("Fetch fees start")
+	fees, err := r.SolanaClient.GetRecentPrioritizationFees(r.Ctx, []solana.PublicKey{})
+	require.NoError(r, err)
+	r.Logger.Info("fees result", fees)
 
-// 	// wait for the transaction to be finalized
-// 	var out *rpc.GetTransactionResult
-// 	isConfirmed := false
-// 	for {
-// 		require.False(r, time.Since(start) > timeout, "waiting solana tx timeout")
+	for _, f := range fees {
+		r.Logger.Info("fee", f.PrioritizationFee)
+	}
 
-// 		time.Sleep(2 * time.Second)
-// 		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{})
-// 		if err == nil {
-// 			isConfirmed = true
-// 			break
-// 		} else {
-// 			r.Logger.Info("error getting tx %s", err.Error())
-// 		}
-// 	}
+	sig, out, isConfirmed := r.BroadcastTxSyncOnce(tx)
+	for {
+		if isConfirmed {
+			r.Logger.Info("tx broadcasted and confirmed")
+			return sig, out
+		}
 
-// 	r.Logger.Info("broadcast once finished", sig, isConfirmed)
-// 	return sig, out, isConfirmed
-// }
-
-// // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
-// func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult) {
-// 	r.Logger.Info("Simulation start")
-// 	sim, err := r.SolanaClient.SimulateTransactionWithOpts(r.Ctx, tx, &rpc.SimulateTransactionOpts{})
-// 	require.NoError(r, err)
-// 	r.Logger.Info("simulation result", *sim.Value.UnitsConsumed)
-
-// 	r.Logger.Info("Fetch fees start")
-// 	fees, err := r.SolanaClient.GetRecentPrioritizationFees(r.Ctx, []solana.PublicKey{})
-// 	require.NoError(r, err)
-// 	r.Logger.Info("fees result", fees)
-
-// 	for _, f := range fees {
-// 		r.Logger.Info("fee", f.PrioritizationFee)
-// 	}
-
-// 	sig, out, isConfirmed := r.BroadcastTxSyncOnce(tx)
-// 	for {
-// 		if isConfirmed {
-// 			r.Logger.Info("tx broadcasted and confirmed")
-// 			return sig, out
-// 		}
-
-// 		r.Logger.Info("manually retrying tx")
-// 		sig, out, isConfirmed = r.BroadcastTxSyncOnce(tx)
-// 	}
-// }
+		r.Logger.Info("manually retrying tx")
+		sig, out, isConfirmed = r.BroadcastTxSyncOnce(tx)
+	}
+}
 
 // SOLDepositAndCall deposits an amount of ZRC20 SOL tokens (in lamports) and calls a contract (if data is provided)
 func (r *E2ERunner) SOLDepositAndCall(
