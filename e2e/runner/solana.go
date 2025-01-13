@@ -231,7 +231,7 @@ func (r *E2ERunner) SPLDepositAndCall(
 		data,
 	)
 
-	limit := computebudget.NewSetComputeUnitLimitInstruction(50000).Build() // 50k compute unit limit
+	limit := computebudget.NewSetComputeUnitLimitInstruction(30000).Build() // 30k compute unit limit
 	feesInit := computebudget.NewSetComputeUnitPriceInstructionBuilder().
 		SetMicroLamports(100000).Build() // 0.1 lamports per compute unit
 	signedTx := r.CreateSignedTransaction(
