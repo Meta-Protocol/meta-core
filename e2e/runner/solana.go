@@ -323,35 +323,64 @@ func (r *E2ERunner) DeploySPL(privateKey *solana.PrivateKey, whitelist bool) *so
 }
 
 // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
-func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult) {
+func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult, bool) {
 	// broadcast the transaction
 	r.Logger.Info("Broadcast start")
+	maxRetries := uint(0)
 	sig, err := r.SolanaClient.SendTransactionWithOpts(r.Ctx, tx, rpc.TransactionOpts{
-		PreflightCommitment: rpc.CommitmentProcessed,
+		SkipPreflight: true,
+		MaxRetries:    &maxRetries,
 	})
 	require.NoError(r, err)
 	r.Logger.Info("broadcast success! tx sig %s; waiting for confirmation...", sig)
 
 	var (
 		start   = time.Now()
-		timeout = 4 * time.Minute // Solana tx expires automatically after 4 minutes
+		timeout = 2 * time.Minute // Solana tx expires automatically after 2 minutes
 	)
 
 	// wait for the transaction to be finalized
 	var out *rpc.GetTransactionResult
+	isConfirmed := false
 	for {
 		require.False(r, time.Since(start) > timeout, "waiting solana tx timeout")
 
-		time.Sleep(1 * time.Second)
+		time.Sleep(2 * time.Second)
 		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{})
 		if err == nil {
+			isConfirmed = true
 			break
 		} else {
 			r.Logger.Info("error getting tx %s", err.Error())
 		}
 	}
 
-	return sig, out
+	r.Logger.Info("broadcast once finished", sig, isConfirmed)
+	return sig, out, isConfirmed
+}
+
+// BroadcastTxSync broadcasts a transaction and waits for it to be finalized
+func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult) {
+	r.Logger.Info("Simulation start")
+	sim, err := r.SolanaClient.SimulateTransactionWithOpts(r.Ctx, tx, &rpc.SimulateTransactionOpts{})
+	require.NoError(r, err)
+	r.Logger.Info("simulation result", sim)
+
+	r.Logger.Info("Fetch fees start")
+	fees, err := r.SolanaClient.GetRecentPrioritizationFees(r.Ctx, []solana.PublicKey{})
+	require.NoError(r, err)
+	r.Logger.Info("fees result", fees)
+
+	sig, out, isConfirmed := r.BroadcastTxSyncOnce(tx)
+	for {
+		if isConfirmed {
+			r.Logger.Info("tx broadcasted and confirmed")
+			return sig, out
+		}
+
+		r.Logger.Info("manually retrying tx")
+		sig, out, isConfirmed = r.BroadcastTxSyncOnce(tx)
+	}
 }
 
 // SOLDepositAndCall deposits an amount of ZRC20 SOL tokens (in lamports) and calls a contract (if data is provided)
