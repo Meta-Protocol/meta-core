@@ -350,6 +350,7 @@ func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signatur
 	for {
 		if time.Since(start) > timeout {
 			r.Logger.Info("waiting solana tx timeout")
+			break
 		}
 
 		time.Sleep(10 * time.Second)
