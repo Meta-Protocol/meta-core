@@ -364,12 +364,16 @@ func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *
 	r.Logger.Info("Simulation start")
 	sim, err := r.SolanaClient.SimulateTransactionWithOpts(r.Ctx, tx, &rpc.SimulateTransactionOpts{})
 	require.NoError(r, err)
-	r.Logger.Info("simulation result", sim)
+	r.Logger.Info("simulation result", *sim.Value.UnitsConsumed)
 
 	r.Logger.Info("Fetch fees start")
 	fees, err := r.SolanaClient.GetRecentPrioritizationFees(r.Ctx, []solana.PublicKey{})
 	require.NoError(r, err)
 	r.Logger.Info("fees result", fees)
+
+	for _, f := range fees {
+		r.Logger.Info("fee", f.PrioritizationFee)
+	}
 
 	sig, out, isConfirmed := r.BroadcastTxSyncOnce(tx)
 	for {
