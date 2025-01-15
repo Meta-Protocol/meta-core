@@ -1,12 +1,17 @@
 package e2etests
 
 import (
+	"fmt"
 	"math/big"
+	"time"
 
+	"github.com/montanaflynn/stats"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/zeta-chain/node/e2e/runner"
 	"github.com/zeta-chain/node/e2e/utils"
+	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
 )
 
 // TestStressSolanaWithdraw tests the stressing withdrawal of SOL
@@ -16,81 +21,86 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	withdrawSOLAmount := utils.ParseBigInt(r, args[0])
 	numWithdrawalsSOL := utils.ParseInt(r, args[1])
 
-	// load deployer private key
+	// Load deployer private key
 	privKey := r.GetSolanaPrivKey()
 
-	r.Logger.Print("starting stress test of %d SOL withdrawals", numWithdrawalsSOL)
+	r.Logger.Print("Starting stress test of %d SOL withdrawals", numWithdrawalsSOL)
 
-	r.Logger.Print("starting to approve tokens")
+	// Approve sufficient amount for all withdrawals
+	totalApproveAmount := new(big.Int).Mul(withdrawSOLAmount, big.NewInt(int64(numWithdrawalsSOL)))
+	tx, err := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, totalApproveAmount)
+	require.NoError(r, err)
+	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
+	utils.RequireTxSuccessful(r, receipt, "approve_sol")
 
-	tx, _ := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, big.NewInt(1e18))
+	// Store durations for latency analysis
+	durationsChan := make(chan float64, numWithdrawalsSOL)
+	defer close(durationsChan)
 
-	r.Logger.Print("approve done")
-	// require.NoError(r, err)
-	// receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
-	// utils.RequireTxSuccessful(r, receipt, "approve_sol")
+	// Create a group to manage goroutines
+	var eg errgroup.Group
 
-	// // create a wait group to wait for all the withdrawals to complete
-	// var eg errgroup.Group
-
-	// // store durations as float64 seconds like prometheus
-	// withdrawDurations := []float64{}
-	// withdrawDurationsLock := sync.Mutex{}
-
-	r.Logger.Print("starting to withdraw tokens")
-	// send the withdrawals SOL
 	for i := 0; i < numWithdrawalsSOL; i++ {
 		i := i
+		eg.Go(func() error {
+			startTime := time.Now()
 
-		r.Logger.Print("withdraw %d", i)
-		// execute the withdraw SOL transaction
-		tx, _ = r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
-		// require.NoError(r, err)
+			// Execute the withdraw SOL transaction
+			tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
+			if err != nil {
+				r.Logger.Print("Error in withdrawal %d: %v", i, err)
+				return nil
+			}
 
-		// receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
-		// utils.RequireTxSuccessful(r, receipt)
+			receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
+			utils.RequireTxSuccessful(r, receipt)
 
-		r.Logger.Print("index %d: starting SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
+			r.Logger.Print("Index %d: Starting SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
 
-	// 	eg.Go(func() error {
-	// 		startTime := time.Now()
-	// 		cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
-	// 		if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
-	// 			return fmt.Errorf(
-	// 				"index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
-	// 				i,
-	// 				cctx.CctxStatus.Status,
-	// 				cctx.CctxStatus.StatusMessage,
-	// 				cctx.Index,
-	// 			)
-	// 		}
-	// 		timeToComplete := time.Since(startTime)
-	// 		r.Logger.Print("index %d: withdraw SOL cctx success in %s", i, timeToComplete.String())
+			// Wait for the cctx to be mined
+			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
+			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
+				return fmt.Errorf(
+					"Index %d: Withdraw cctx failed with status %s, message %s, cctx index %s",
+					i,
+					cctx.CctxStatus.Status,
+					cctx.CctxStatus.StatusMessage,
+					cctx.Index,
+				)
+			}
 
-	// 		withdrawDurationsLock.Lock()
-	// 		withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
-	// 		withdrawDurationsLock.Unlock()
+			timeToComplete := time.Since(startTime)
+			r.Logger.Print("Index %d: Withdraw SOL cctx success in %s", i, timeToComplete.String())
 
-	// 		return nil
-	// 	})
-	// }
-
-	// err = eg.Wait()
-
-	// desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
-	// if descErr != nil {
-	// 	r.Logger.Print("❌ failed to calculate latency report: %v", descErr)
-	// }
-
-	// r.Logger.Print("Latency report:")
-	// r.Logger.Print("min:  %.2f", desc.Min)
-	// r.Logger.Print("max:  %.2f", desc.Max)
-	// r.Logger.Print("mean: %.2f", desc.Mean)
-	// r.Logger.Print("std:  %.2f", desc.Std)
-	// for _, p := range desc.DescriptionPercentiles {
-	// 	r.Logger.Print("p%.0f:  %.2f", p.Percentile, p.Value)
+			durationsChan <- timeToComplete.Seconds()
+			return nil
+		})
 	}
 
-	// require.NoError(r, err)
-	r.Logger.Print("all SOL withdrawals completed")
+	// Wait for all goroutines to complete
+	err = eg.Wait()
+	require.NoError(r, err)
+
+	// Collect durations
+	var withdrawDurations []float64
+	for duration := range durationsChan {
+		withdrawDurations = append(withdrawDurations, duration)
+	}
+
+	// Generate latency report
+	desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
+	if descErr != nil {
+		r.Logger.Print("❌ Failed to calculate latency report: %v", descErr)
+	}
+
+	r.Logger.Print("Latency report:")
+	r.Logger.Print("Min:  %.2f", desc.Min)
+	r.Logger.Print("Max:  %.2f", desc.Max)
+	r.Logger.Print("Mean: %.2f", desc.Mean)
+	r.Logger.Print("Std:  %.2f", desc.Std)
+	for _, p := range desc.DescriptionPercentiles {
+		r.Logger.Print("P%.0f:  %.2f", p.Percentile, p.Value)
+	}
+
+	r.Logger.Print("All SOL withdrawals completed")
 }
