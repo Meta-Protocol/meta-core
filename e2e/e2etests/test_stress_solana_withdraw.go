@@ -1,3 +1,20 @@
+package e2etests
+
+import (
+	"fmt"
+	"math/big"
+	"time"
+
+	"github.com/montanaflynn/stats"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
+
+	"github.com/zeta-chain/node/e2e/runner"
+	"github.com/zeta-chain/node/e2e/utils"
+	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
+)
+
+// TestStressSolanaWithdraw tests the stressing withdrawal of SOL
 func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	require.Len(r, args, 2)
 
