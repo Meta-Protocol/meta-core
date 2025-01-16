@@ -39,14 +39,6 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 	utils.RequireTxSuccessful(r, receipt, "approve_sol")
 
-	// Fetch the starting nonce for the account
-	startingNonce, err := r.ZEVMClient.PendingNonceAt(r.Ctx, r.ZEVMAuth.From)
-	require.NoError(r, err, "failed to fetch starting nonce")
-
-	// Mutex to manage nonce incrementing
-	nonceLock := sync.Mutex{}
-	nextNonce := startingNonce
-
 	// Store transaction objects
 	txObjects := make([]*types.Transaction, numWithdrawalsSOL)
 	txObjectsLock := sync.Mutex{}
@@ -59,13 +51,13 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 			// Increment the withdrawal amount by 1 lamport for each transaction
 			withdrawAmount := new(big.Int).Add(baseWithdrawAmount, big.NewInt(int64(i)))
 
-			// Increment nonce safely
-			nonceLock.Lock()
-			nonce := nextNonce
-			nextNonce++
-			nonceLock.Unlock()
+			// Fetch the latest nonce dynamically from the Ethereum client
+			nonce, err := r.ZEVMClient.PendingNonceAt(r.Ctx, r.ZEVMAuth.From)
+			if err != nil {
+				return fmt.Errorf("index %d: failed to fetch nonce: %v", i, err)
+			}
 
-			// Create a new transaction authorizer with the incremented nonce
+			// Create a new transaction authorizer with the dynamic nonce
 			auth := *r.ZEVMAuth // Copy the original authorizer
 			auth.Nonce = big.NewInt(int64(nonce))
 
