@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/montanaflynn/stats"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
@@ -35,9 +36,9 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 	utils.RequireTxSuccessful(r, receipt, "approve_sol")
 
-	// Store transaction hashes
-	txHashes := make([]string, numWithdrawalsSOL)
-	txHashesLock := sync.Mutex{}
+	// Store transaction objects
+	txObjects := make([]*types.Transaction, numWithdrawalsSOL)
+	txObjectsLock := sync.Mutex{}
 
 	// Step 1: Send all transactions concurrently
 	sendGroup := errgroup.Group{}
@@ -51,9 +52,9 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 
 			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
 
-			txHashesLock.Lock()
-			txHashes[i] = tx.Hash().Hex()
-			txHashesLock.Unlock()
+			txObjectsLock.Lock()
+			txObjects[i] = tx
+			txObjectsLock.Unlock()
 
 			return nil
 		})
@@ -68,21 +69,21 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	withdrawDurations := []float64{}
 	withdrawDurationsLock := sync.Mutex{}
 
-	for i, txHash := range txHashes {
+	for i, tx := range txObjects {
 		i := i
-		txHash := txHash // Capture loop variables for goroutine
+		tx := tx // Capture loop variables for goroutine
 		waitGroup.Go(func() error {
 			startTime := time.Now()
 
 			// Wait for receipt
-			receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, txHash, r.Logger, r.ReceiptTimeout)
+			receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 			if receipt == nil {
-				return fmt.Errorf("index %d: failed to get receipt for tx hash: %s", i, txHash)
+				return fmt.Errorf("index %d: failed to get receipt for tx hash: %s", i, tx.Hash().Hex())
 			}
 			utils.RequireTxSuccessful(r, receipt, "withdraw_sol")
 
 			// Wait for the cross-chain context (cctx) mining status
-			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, txHash, r.CctxClient, r.Logger, r.ReceiptTimeout)
+			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
 			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
 				return fmt.Errorf(
 					"index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
@@ -124,6 +125,5 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 		r.Logger.Print("p%.0f:  %.2f", p.Percentile, p.Value)
 	}
 
-	require.NoError(r, err)
 	r.Logger.Print("all SOL withdrawals completed")
 }
