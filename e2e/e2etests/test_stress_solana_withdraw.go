@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/montanaflynn/stats"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/zeta-chain/node/e2e/runner"
 	"github.com/zeta-chain/node/e2e/utils"
 	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
@@ -25,16 +25,29 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	// Calculate the total approval amount
 	totalApprovalAmount := new(big.Int).Mul(withdrawSOLAmount, big.NewInt(int64(numWithdrawalsSOL)))
 
+	// Add a buffer to the total approval amount
+	bufferFactor := 1.1 // Approve 10% more
+	totalApprovalAmountWithBuffer := new(big.Int).Mul(totalApprovalAmount, big.NewInt(int64(bufferFactor*1e9)))
+	totalApprovalAmountWithBuffer.Div(totalApprovalAmountWithBuffer, big.NewInt(1e9)) // Avoid floating-point inaccuracies
+
 	// Load deployer private key
 	privKey := r.GetSolanaPrivKey()
 
-	r.Logger.Print("starting stress test of %d SOL withdrawals with total approval amount of %s", numWithdrawalsSOL, totalApprovalAmount.String())
+	r.Logger.Print("starting stress test of %d SOL withdrawals with total approval amount of %s (including buffer)", numWithdrawalsSOL, totalApprovalAmountWithBuffer.String())
 
-	// Approve the total amount
-	tx, err := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, totalApprovalAmount)
-	require.NoError(r, err, "failed to approve total amount")
+	// Approve the total amount with buffer
+	tx, err := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, totalApprovalAmountWithBuffer)
+	require.NoError(r, err, "failed to approve total amount with buffer")
 	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 	utils.RequireTxSuccessful(r, receipt, "approve_sol")
+
+	// Get the starting nonce for the account
+	startingNonce, err := r.ZEVMClient.PendingNonceAt(r.Ctx, r.ZEVMAuth.From)
+	require.NoError(r, err, "failed to fetch starting nonce")
+
+	// Mutex to manage nonce incrementing
+	nonceLock := sync.Mutex{}
+	nextNonce := startingNonce
 
 	// Store transaction objects
 	txObjects := make([]*types.Transaction, numWithdrawalsSOL)
@@ -45,7 +58,18 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	for i := 0; i < numWithdrawalsSOL; i++ {
 		i := i // Capture loop variable for goroutine
 		sendGroup.Go(func() error {
-			tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
+			// Increment nonce safely
+			nonceLock.Lock()
+			nonce := nextNonce
+			nextNonce++
+			nonceLock.Unlock()
+
+			// Create a new transaction authorizer with the incremented nonce
+			auth := *r.ZEVMAuth // Copy the original authorizer
+			auth.Nonce = big.NewInt(int64(nonce))
+
+			// Send the transaction
+			tx, err := r.SOLZRC20.Withdraw(&auth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
 			if err != nil {
 				return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
 			}
