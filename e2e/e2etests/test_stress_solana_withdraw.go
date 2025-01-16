@@ -1,13 +1,11 @@
 package e2etests
 
 import (
-	"fmt"
 	"math/big"
-	"time"
 
-	"github.com/montanaflynn/stats"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/gagliardetto/solana-go"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/zeta-chain/node/e2e/runner"
 	"github.com/zeta-chain/node/e2e/utils"
@@ -16,93 +14,43 @@ import (
 
 // TestStressSolanaWithdraw tests the stressing withdrawal of SOL
 func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
-	require.Len(r, args, 2)
+	require.Len(r, args, 1)
 
-	withdrawSOLAmount := utils.ParseBigInt(r, args[0])
-	numWithdrawalsSOL := utils.ParseInt(r, args[1])
+	withdrawAmount := utils.ParseBigInt(r, args[0])
 
-	privKey := r.GetSolanaPrivKey()
-	r.Logger.Print("Starting stress test of %d SOL withdrawals", numWithdrawalsSOL)
-
-	totalApproveAmount := new(big.Int).Mul(withdrawSOLAmount, big.NewInt(int64(numWithdrawalsSOL)))
-	tx, err := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, totalApproveAmount)
+	// get ERC20 SOL balance before withdraw
+	balanceBefore, err := r.SOLZRC20.BalanceOf(&bind.CallOpts{}, r.EVMAddress())
 	require.NoError(r, err)
-	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
-	utils.RequireTxSuccessful(r, receipt, "approve_sol")
+	r.Logger.Info("runner balance of SOL before withdraw: %d", balanceBefore)
 
-	// Fetch the current nonce
-	nonce, err := r.ZEVMClient.PendingNonceAt(r.Ctx, r.ZEVMAuth.From)
+	require.Equal(r, 1, balanceBefore.Cmp(withdrawAmount), "Insufficient balance for withdrawal")
+
+	// parse withdraw amount (in lamports), approve amount is 1 SOL
+	approvedAmount := new(big.Int).SetUint64(solana.LAMPORTS_PER_SOL)
+	require.Equal(
+		r,
+		-1,
+		withdrawAmount.Cmp(approvedAmount),
+		"Withdrawal amount must be less than the approved amount: %v",
+		approvedAmount,
+	)
+
+	// load deployer private key
+	privkey := r.GetSolanaPrivKey()
+
+	// withdraw
+	tx := r.WithdrawSOLZRC20(privkey.PublicKey(), withdrawAmount, approvedAmount)
+
+	// wait for the cctx to be mined
+	cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.CctxTimeout)
+	utils.RequireCCTXStatus(r, cctx, crosschaintypes.CctxStatus_OutboundMined)
+
+	// get ERC20 SOL balance after withdraw
+	balanceAfter, err := r.SOLZRC20.BalanceOf(&bind.CallOpts{}, r.EVMAddress())
 	require.NoError(r, err)
+	r.Logger.Info("runner balance of SOL after withdraw: %d", balanceAfter)
 
-	durationsChan := make(chan float64, numWithdrawalsSOL)
-	defer close(durationsChan)
-
-	var eg errgroup.Group
-
-	for i := 0; i < numWithdrawalsSOL; i++ {
-		i := i
-		currentNonce := nonce + uint64(i) // Increment nonce for each transaction
-
-		eg.Go(func() error {
-			startTime := time.Now()
-
-			auth := r.ZEVMAuth
-			auth.Nonce = big.NewInt(int64(currentNonce)) // Set unique nonce
-
-			tx, err := r.SOLZRC20.Withdraw(auth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
-			if err != nil {
-				r.Logger.Print("Error in withdrawal %d: %v", i, err)
-				return nil
-			}
-
-			receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
-			if receipt.Status != 1 {
-				r.Logger.Print("Error in transaction %d: receipt status is not successful: %s", i, tx.Hash().Hex())
-				return fmt.Errorf("transaction failed")
-			}
-
-			r.Logger.Print("Index %d: Starting SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
-
-			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
-			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
-				return fmt.Errorf(
-					"Index %d: Withdraw cctx failed with status %s, message %s, cctx index %s",
-					i,
-					cctx.CctxStatus.Status,
-					cctx.CctxStatus.StatusMessage,
-					cctx.Index,
-				)
-			}
-
-			timeToComplete := time.Since(startTime)
-			r.Logger.Print("Index %d: Withdraw SOL cctx success in %s", i, timeToComplete.String())
-
-			durationsChan <- timeToComplete.Seconds()
-			return nil
-		})
-	}
-
-	err = eg.Wait()
-	require.NoError(r, err)
-
-	var withdrawDurations []float64
-	for duration := range durationsChan {
-		withdrawDurations = append(withdrawDurations, duration)
-	}
-
-	desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
-	if descErr != nil {
-		r.Logger.Print("❌ Failed to calculate latency report: %v", descErr)
-	}
-
-	r.Logger.Print("Latency report:")
-	r.Logger.Print("Min:  %.2f", desc.Min)
-	r.Logger.Print("Max:  %.2f", desc.Max)
-	r.Logger.Print("Mean: %.2f", desc.Mean)
-	r.Logger.Print("Std:  %.2f", desc.Std)
-	for _, p := range desc.DescriptionPercentiles {
-		r.Logger.Print("P%.0f:  %.2f", p.Percentile, p.Value)
-	}
-
-	r.Logger.Print("All SOL withdrawals completed")
+	// check if the balance is reduced correctly
+	amountReduced := new(big.Int).Sub(balanceBefore, balanceAfter)
+	require.True(r, amountReduced.Cmp(withdrawAmount) >= 0, "balance is not reduced correctly")
 }
