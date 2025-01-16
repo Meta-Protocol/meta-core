@@ -41,38 +41,51 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 
 	// send the withdrawals SOL
 	for i := 0; i < numWithdrawalsSOL; i++ {
-		i := i
+    i := i // capture loop variable for goroutine
 
-		// execute the withdraw SOL transaction
-		tx, err = r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
-		require.NoError(r, err)
+    eg.Go(func() error {
+        // Start timing for this withdrawal
+        startTime := time.Now()
 
-		receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
-		utils.RequireTxSuccessful(r, receipt)
+        // Execute the withdraw SOL transaction concurrently
+        tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
+        if err != nil {
+            return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
+        }
 
-		r.Logger.Print("index %d: starting SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
+        r.Logger.Print("index %d: starting SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
 
-		eg.Go(func() error {
-			startTime := time.Now()
-			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
-			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
-				return fmt.Errorf(
-					"index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
-					i,
-					cctx.CctxStatus.Status,
-					cctx.CctxStatus.StatusMessage,
-					cctx.Index,
-				)
-			}
-			timeToComplete := time.Since(startTime)
-			r.Logger.Print("index %d: withdraw SOL cctx success in %s", i, timeToComplete.String())
+        // Wait for transaction receipt
+        receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
+        if receipt == nil {
+            return fmt.Errorf("index %d: failed to get receipt for tx hash: %s", i, tx.Hash().Hex())
+        }
 
-			withdrawDurationsLock.Lock()
-			withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
-			withdrawDurationsLock.Unlock()
+        utils.RequireTxSuccessful(r, receipt, "withdraw_sol")
 
-			return nil
-		})
+        // Wait for the cross-chain context (cctx) mining status
+        cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
+        if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
+            return fmt.Errorf(
+                "index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
+                i,
+                cctx.CctxStatus.Status,
+                cctx.CctxStatus.StatusMessage,
+                cctx.Index,
+            )
+        }
+
+        // Record the time it took to complete this transaction
+        timeToComplete := time.Since(startTime)
+        r.Logger.Print("index %d: withdraw SOL cctx success in %s", i, timeToComplete.String())
+
+        // Store duration in a thread-safe way
+        withdrawDurationsLock.Lock()
+        withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
+        withdrawDurationsLock.Unlock()
+
+        return nil
+    })
 	}
 
 	err = eg.Wait()
