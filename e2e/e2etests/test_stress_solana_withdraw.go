@@ -18,78 +18,98 @@ import (
 // TestStressSolanaWithdraw tests the stressing withdrawal of SOL
 func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	require.Len(r, args, 2)
-
 	withdrawSOLAmount := utils.ParseBigInt(r, args[0])
 	numWithdrawalsSOL := utils.ParseInt(r, args[1])
 
-	// load deployer private key
+	// Calculate the total approval amount
+	totalApprovalAmount := new(big.Int).Mul(withdrawSOLAmount, big.NewInt(int64(numWithdrawalsSOL)))
+
+	// Load deployer private key
 	privKey := r.GetSolanaPrivKey()
 
-	r.Logger.Print("starting stress test of %d SOL withdrawals", numWithdrawalsSOL)
+	r.Logger.Print("starting stress test of %d SOL withdrawals with total approval amount of %s", numWithdrawalsSOL, totalApprovalAmount.String())
 
-	tx, err := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, big.NewInt(1e18))
-	require.NoError(r, err)
+	// Approve the total amount
+	tx, err := r.SOLZRC20.Approve(r.ZEVMAuth, r.SOLZRC20Addr, totalApprovalAmount)
+	require.NoError(r, err, "failed to approve total amount")
 	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 	utils.RequireTxSuccessful(r, receipt, "approve_sol")
 
-	// create a wait group to wait for all the withdrawals to complete
-	var eg errgroup.Group
+	// Store transaction hashes
+	txHashes := make([]string, numWithdrawalsSOL)
+	txHashesLock := sync.Mutex{}
 
-	// store durations as float64 seconds like prometheus
+	// Step 1: Send all transactions concurrently
+	sendGroup := errgroup.Group{}
+	for i := 0; i < numWithdrawalsSOL; i++ {
+		i := i // Capture loop variable for goroutine
+		sendGroup.Go(func() error {
+			tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
+			if err != nil {
+				return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
+			}
+
+			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
+
+			txHashesLock.Lock()
+			txHashes[i] = tx.Hash().Hex()
+			txHashesLock.Unlock()
+
+			return nil
+		})
+	}
+
+	// Wait for all send operations to complete
+	err = sendGroup.Wait()
+	require.NoError(r, err, "error during transaction sends")
+
+	// Step 2: Wait for all transactions concurrently
+	waitGroup := errgroup.Group{}
 	withdrawDurations := []float64{}
 	withdrawDurationsLock := sync.Mutex{}
 
-	// send the withdrawals SOL
-	for i := 0; i < numWithdrawalsSOL; i++ {
-    i := i // capture loop variable for goroutine
+	for i, txHash := range txHashes {
+		i := i
+		txHash := txHash // Capture loop variables for goroutine
+		waitGroup.Go(func() error {
+			startTime := time.Now()
 
-    eg.Go(func() error {
-        // Start timing for this withdrawal
-        startTime := time.Now()
+			// Wait for receipt
+			receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, txHash, r.Logger, r.ReceiptTimeout)
+			if receipt == nil {
+				return fmt.Errorf("index %d: failed to get receipt for tx hash: %s", i, txHash)
+			}
+			utils.RequireTxSuccessful(r, receipt, "withdraw_sol")
 
-        // Execute the withdraw SOL transaction concurrently
-        tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
-        if err != nil {
-            return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
-        }
+			// Wait for the cross-chain context (cctx) mining status
+			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, txHash, r.CctxClient, r.Logger, r.ReceiptTimeout)
+			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
+				return fmt.Errorf(
+					"index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
+					i,
+					cctx.CctxStatus.Status,
+					cctx.CctxStatus.StatusMessage,
+					cctx.Index,
+				)
+			}
 
-        r.Logger.Print("index %d: starting SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
+			timeToComplete := time.Since(startTime)
+			r.Logger.Print("index %d: withdraw SOL cctx success in %s", i, timeToComplete.String())
 
-        // Wait for transaction receipt
-        receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
-        if receipt == nil {
-            return fmt.Errorf("index %d: failed to get receipt for tx hash: %s", i, tx.Hash().Hex())
-        }
+			// Store duration in a thread-safe way
+			withdrawDurationsLock.Lock()
+			withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
+			withdrawDurationsLock.Unlock()
 
-        utils.RequireTxSuccessful(r, receipt, "withdraw_sol")
-
-        // Wait for the cross-chain context (cctx) mining status
-        cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
-        if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
-            return fmt.Errorf(
-                "index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
-                i,
-                cctx.CctxStatus.Status,
-                cctx.CctxStatus.StatusMessage,
-                cctx.Index,
-            )
-        }
-
-        // Record the time it took to complete this transaction
-        timeToComplete := time.Since(startTime)
-        r.Logger.Print("index %d: withdraw SOL cctx success in %s", i, timeToComplete.String())
-
-        // Store duration in a thread-safe way
-        withdrawDurationsLock.Lock()
-        withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
-        withdrawDurationsLock.Unlock()
-
-        return nil
-    })
+			return nil
+		})
 	}
 
-	err = eg.Wait()
+	// Wait for all wait operations to complete
+	err = waitGroup.Wait()
+	require.NoError(r, err, "error during transaction waits")
 
+	// Generate and print latency report
 	desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
 	if descErr != nil {
 		r.Logger.Print("❌ failed to calculate latency report: %v", descErr)
