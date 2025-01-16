@@ -19,14 +19,12 @@ import (
 // TestStressSolanaWithdraw tests the stressing withdrawal of SOL
 func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	require.Len(r, args, 2)
-	withdrawSOLAmount := utils.ParseBigInt(r, args[0])
+	baseWithdrawAmount := utils.ParseBigInt(r, args[0])
 	numWithdrawalsSOL := utils.ParseInt(r, args[1])
 
-	// Calculate the total approval amount
-	totalApprovalAmount := new(big.Int).Mul(withdrawSOLAmount, big.NewInt(int64(numWithdrawalsSOL)))
-
-	// Add a buffer to the total approval amount
+	// Calculate the total approval amount (add a buffer for all transactions)
 	bufferFactor := 1.1 // Approve 10% more
+	totalApprovalAmount := new(big.Int).Mul(baseWithdrawAmount, big.NewInt(int64(numWithdrawalsSOL)))
 	totalApprovalAmountWithBuffer := new(big.Int).Mul(totalApprovalAmount, big.NewInt(int64(bufferFactor*1e9)))
 	totalApprovalAmountWithBuffer.Div(totalApprovalAmountWithBuffer, big.NewInt(1e9)) // Avoid floating-point inaccuracies
 
@@ -50,13 +48,16 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	for i := 0; i < numWithdrawalsSOL; i++ {
 		i := i // Capture loop variable for goroutine
 		sendGroup.Go(func() error {
-			// Use the default transaction authorizer without manually setting the nonce
-			tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
+			// Increment the withdrawal amount by 1 lamport for each transaction
+			withdrawAmount := new(big.Int).Add(baseWithdrawAmount, big.NewInt(int64(i)))
+
+			// Send the transaction
+			tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawAmount)
 			if err != nil {
 				return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
 			}
 
-			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
+			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s, amount: %s", i, tx.Hash().Hex(), withdrawAmount.String())
 
 			// Store the transaction object
 			txObjectsLock.Lock()
