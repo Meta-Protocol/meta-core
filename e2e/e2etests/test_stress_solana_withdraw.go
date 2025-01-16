@@ -41,14 +41,6 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 	utils.RequireTxSuccessful(r, receipt, "approve_sol")
 
-	// Fetch the starting nonce for the account
-	startingNonce, err := r.ZEVMClient.PendingNonceAt(r.Ctx, r.ZEVMAuth.From)
-	require.NoError(r, err, "failed to fetch starting nonce")
-
-	// Mutex to manage nonce incrementing
-	nonceLock := sync.Mutex{}
-	nextNonce := startingNonce
-
 	// Store transaction objects
 	txObjects := make([]*types.Transaction, numWithdrawalsSOL)
 	txObjectsLock := sync.Mutex{}
@@ -58,23 +50,13 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	for i := 0; i < numWithdrawalsSOL; i++ {
 		i := i // Capture loop variable for goroutine
 		sendGroup.Go(func() error {
-			// Increment nonce safely
-			nonceLock.Lock()
-			nonce := nextNonce
-			nextNonce++
-			nonceLock.Unlock()
-
-			// Create a new transaction authorizer with the incremented nonce
-			auth := *r.ZEVMAuth // Copy the original authorizer
-			auth.Nonce = big.NewInt(int64(nonce))
-
-			// Send the transaction
-			tx, err := r.SOLZRC20.Withdraw(&auth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
+			// Use the default transaction authorizer without manually setting the nonce
+			tx, err := r.SOLZRC20.Withdraw(r.ZEVMAuth, []byte(privKey.PublicKey().String()), withdrawSOLAmount)
 			if err != nil {
 				return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
 			}
 
-			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s (nonce: %d)", i, tx.Hash().Hex(), nonce)
+			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
 
 			// Store the transaction object
 			txObjectsLock.Lock()
