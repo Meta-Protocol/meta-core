@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/montanaflynn/stats"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/zeta-chain/node/e2e/runner"
 	"github.com/zeta-chain/node/e2e/utils"
 	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
@@ -41,7 +41,7 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 	receipt := utils.MustWaitForTxReceipt(r.Ctx, r.ZEVMClient, tx, r.Logger, r.ReceiptTimeout)
 	utils.RequireTxSuccessful(r, receipt, "approve_sol")
 
-	// Get the starting nonce for the account
+	// Fetch the starting nonce for the account
 	startingNonce, err := r.ZEVMClient.PendingNonceAt(r.Ctx, r.ZEVMAuth.From)
 	require.NoError(r, err, "failed to fetch starting nonce")
 
@@ -74,8 +74,9 @@ func TestStressSolanaWithdraw(r *runner.E2ERunner, args []string) {
 				return fmt.Errorf("index %d: failed to send SOL withdrawal transaction: %v", i, err)
 			}
 
-			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s", i, tx.Hash().Hex())
+			r.Logger.Print("index %d: sent SOL withdraw, tx hash: %s (nonce: %d)", i, tx.Hash().Hex(), nonce)
 
+			// Store the transaction object
 			txObjectsLock.Lock()
 			txObjects[i] = tx
 			txObjectsLock.Unlock()
