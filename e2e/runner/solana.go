@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"math/big"
 	"time"
 
@@ -151,6 +152,7 @@ func (r *E2ERunner) CreateSignedTransaction(
 		recent.Value.Blockhash,
 		solana.TransactionPayer(privateKey.PublicKey()),
 	)
+	fmt.Println("latest blockhash at tx signing", recent.Value.LastValidBlockHeight)
 	require.NoError(r, err)
 
 	// sign the initialize transaction
@@ -331,30 +333,43 @@ func (r *E2ERunner) DeploySPL(privateKey *solana.PrivateKey, whitelist bool) *so
 func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult, bool) {
 	// broadcast the transaction
 	r.Logger.Info("Broadcast start")
-	maxRetries := uint(0)
+	maxRetries := uint(1)
 	sig, err := r.SolanaClient.SendTransactionWithOpts(r.Ctx, tx, rpc.TransactionOpts{
-		SkipPreflight: true,
-		MaxRetries:    &maxRetries,
+		SkipPreflight:       true,
+		MaxRetries:          &maxRetries,
+		PreflightCommitment: rpc.CommitmentConfirmed,
 	})
-	require.NoError(r, err)
-	r.Logger.Info("broadcast success! tx sig %s; waiting for confirmation...", sig)
+	if err != nil { // try to fetch tx to see if error is not because it is already broadcasted
+		r.Logger.Info("error sending tx %s, check if it's already broadcasted, err: %s", sig, err.Error())
 
-	var (
-		start   = time.Now()
-		timeout = 10 * time.Second // Retry if not confirmed in 10s
-	)
+		out, errGet := r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{
+			Commitment: rpc.CommitmentConfirmed,
+		})
+
+		if errGet == nil {
+			return sig, out, true
+		}
+
+		r.Logger.Info("error getting tx %s", errGet.Error())
+		require.NoError(r, err)
+	}
+	r.Logger.Info("broadcast success! tx sig %s; waiting for confirmation...", sig)
 
 	// wait for the transaction to be finalized
 	var out *rpc.GetTransactionResult
 	isConfirmed := false
 	for {
-		if time.Since(start) > timeout {
-			r.Logger.Info("waiting solana tx timeout")
-			break
+		time.Sleep(5 * time.Second)
+		blockH, err := r.SolanaClient.GetBlockHeight(r.Ctx, rpc.CommitmentConfirmed)
+		if err != nil {
+			fmt.Println("block height err", err.Error())
+		} else {
+			fmt.Println("current block height", blockH)
 		}
 
-		time.Sleep(2 * time.Second)
-		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{})
+		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{
+			Commitment: rpc.CommitmentConfirmed,
+		})
 		if err == nil {
 			isConfirmed = true
 			break
@@ -363,25 +378,25 @@ func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signatur
 		}
 	}
 
-	r.Logger.Info("broadcast once finished", sig, isConfirmed)
+	r.Logger.Info("broadcast once finished %s %t", sig, isConfirmed)
 	return sig, out, isConfirmed
 }
 
 // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
 func (r *E2ERunner) BroadcastTxSync(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult) {
-	r.Logger.Info("Simulation start")
-	sim, err := r.SolanaClient.SimulateTransactionWithOpts(r.Ctx, tx, &rpc.SimulateTransactionOpts{})
-	require.NoError(r, err)
-	r.Logger.Info("simulation result", *sim.Value.UnitsConsumed)
+	// r.Logger.Info("Simulation start")
+	// sim, err := r.SolanaClient.SimulateTransactionWithOpts(r.Ctx, tx, &rpc.SimulateTransactionOpts{})
+	// require.NoError(r, err)
+	// r.Logger.Info("simulation result", *sim.Value.UnitsConsumed)
 
-	r.Logger.Info("Fetch fees start")
-	fees, err := r.SolanaClient.GetRecentPrioritizationFees(r.Ctx, []solana.PublicKey{})
-	require.NoError(r, err)
-	r.Logger.Info("fees result", fees)
+	// r.Logger.Info("Fetch fees start")
+	// fees, err := r.SolanaClient.GetRecentPrioritizationFees(r.Ctx, []solana.PublicKey{})
+	// require.NoError(r, err)
+	// r.Logger.Info("fees result", fees)
 
-	for _, f := range fees {
-		r.Logger.Info("fee", f.PrioritizationFee)
-	}
+	// for _, f := range fees {
+	// 	r.Logger.Info("fee", f.PrioritizationFee)
+	// }
 
 	start := time.Now()
 	timeout := 2 * time.Minute // Expires after 2 mins
