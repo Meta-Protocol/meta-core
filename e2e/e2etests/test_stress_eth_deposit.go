@@ -2,58 +2,102 @@ package e2etests
 
 import (
 	"fmt"
+	"math/big"
+	"strconv"
+	"sync"
 	"time"
 
-	ethcommon "github.com/ethereum/go-ethereum/common"
+	"github.com/montanaflynn/stats"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/zeta-chain/protocol-contracts/pkg/gatewayzevm.sol"
 
 	"github.com/zeta-chain/node/e2e/runner"
 	"github.com/zeta-chain/node/e2e/utils"
 	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
 )
 
-// TestStressEtherDeposit tests the stressing deposit of ether
-func TestStressEtherDeposit(r *runner.E2ERunner, args []string) {
-	require.Len(r, args, 2)
+func TestStressETHWithdrawAndCall(r *runner.E2ERunner, args []string) {
+    require.Len(r, args, 2)
 
-	// parse deposit amount and number of deposits
-	depositAmount := utils.ParseBigInt(r, args[0])
-	numDeposits := utils.ParseInt(r, args[1])
+    withdrawalAmount := utils.ParseBigInt(r, args[0])
+    numWithdraws, err := strconv.Atoi(args[1])
+    require.NoError(r, err)
+    require.GreaterOrEqual(r, numWithdraws, 1)
 
-	r.Logger.Print("starting stress test of %d deposits", numDeposits)
+    previousGasLimit := r.ZEVMAuth.GasLimit
+    r.ZEVMAuth.GasLimit = 10_000_000
+    defer func() {
+        r.ZEVMAuth.GasLimit = previousGasLimit
+    }()
 
-	// create a wait group to wait for all the deposits to complete
-	var eg errgroup.Group
+    // Approve the ETH ZRC20 to Gateway, so we can withdraw
+    r.ApproveETHZRC20(r.GatewayZEVMAddr)
 
-	// send the deposits
-	for i := 0; i < numDeposits; i++ {
-		i := i
-		hash := r.LegacyDepositEtherWithAmount(depositAmount)
-		r.Logger.Print("index %d: starting deposit, tx hash: %s", i, hash.Hex())
+    r.Logger.Print("Starting stress test of %d withdraw-and-call operations", numWithdraws)
 
-		eg.Go(func() error { return monitorEtherDeposit(r, hash, i, time.Now()) })
-	}
+		var eg errgroup.Group
+    var durationsLock sync.Mutex
+    var withdrawDurations []float64
 
-	require.NoError(r, eg.Wait())
+    for i := 0; i < numWithdraws; i++ {
+        // It's nice to create a unique payload per call
+        payload := randomPayload(r)
+        i := i
 
-	r.Logger.Print("all deposits completed")
-}
+        eg.Go(func() error {
+            startTime := time.Now()
 
-// monitorEtherDeposit monitors the deposit of ether, returns once the deposit is complete
-func monitorEtherDeposit(r *runner.E2ERunner, hash ethcommon.Hash, index int, startTime time.Time) error {
-	cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, hash.Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
-	if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
-		return fmt.Errorf(
-			"index %d: deposit cctx failed with status %s, message %s, cctx index %s",
-			index,
-			cctx.CctxStatus.Status,
-			cctx.CctxStatus.StatusMessage,
-			cctx.Index,
-		)
-	}
-	timeToComplete := time.Since(startTime)
-	r.Logger.Print("index %d: deposit cctx success in %s", index, timeToComplete.String())
+            tx := r.ETHWithdrawAndCall(
+                r.TestDAppV2EVMAddr,
+                withdrawalAmount,
+                []byte(payload),
+                gatewayzevm.RevertOptions{OnRevertGasLimit: big.NewInt(0)},
+            )
 
-	return nil
+            r.Logger.Print("index %d: starting withdraw-and-call, tx hash: %s", i, tx.Hash().Hex())
+
+            cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.CctxTimeout)
+            if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
+                return fmt.Errorf(
+                    "index %d: cctx failed with status %s, message %s, cctx index %s",
+                    i,
+                    cctx.CctxStatus.Status,
+                    cctx.CctxStatus.StatusMessage,
+                    cctx.Index,
+                )
+            }
+
+            timeToComplete := time.Since(startTime)
+            r.Logger.Print("index %d: withdraw-and-call cctx success in %s", i, timeToComplete)
+
+            r.AssertTestDAppEVMCalled(true, payload, withdrawalAmount)
+
+            durationsLock.Lock()
+            withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
+            durationsLock.Unlock()
+
+            return nil
+        })
+    }
+
+    err = eg.Wait()
+    require.NoError(r, err)
+
+    desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
+    if descErr != nil {
+        r.Logger.Print("❌ failed to calculate latency report: %v", descErr)
+    } else {
+        r.Logger.Print("Latency report:")
+        r.Logger.Print("min:  %.2f", desc.Min)
+        r.Logger.Print("max:  %.2f", desc.Max)
+        r.Logger.Print("mean: %.2f", desc.Mean)
+        r.Logger.Print("std:  %.2f", desc.Std)
+        for _, p := range desc.DescriptionPercentiles {
+            r.Logger.Print("p%.0f:  %.2f", p.Percentile, p.Value)
+        }
+    }
+
+    r.Logger.Print("All withdraw-and-call operations completed successfully")
 }
