@@ -74,7 +74,7 @@ func TestStressEtherWithdraw(r *runner.E2ERunner, args []string) {
         }
 
         // Create the withdraw transaction via Gateway
-        tx, err := r.Gateway.Withdraw(
+        tx, err := r.GatewayZEVM.Withdraw(
             r.ZEVMAuth,         // EVM signer opts
             receiverBytes,
             withdrawalAmount,
