@@ -3,11 +3,9 @@ package e2etests
 import (
 	"fmt"
 	"math/big"
-	"strconv"
-	"sync"
 	"time"
 
-	"github.com/montanaflynn/stats"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 
@@ -17,97 +15,62 @@ import (
 	"github.com/zeta-chain/protocol-contracts/pkg/gatewayzevm.sol"
 )
 
-// TestStressEtherWithdraw tests the stressing withdraw of ether with payload
+// TestStressEtherWithdraw tests the stressing withdraw of ether
 func TestStressEtherWithdraw(r *runner.E2ERunner, args []string) {
 	require.Len(r, args, 2)
 
-	// Parse withdrawal amount and number of withdrawals
-	withdrawalAmount := utils.ParseBigInt(r, args[0])
-	numWithdrawals, err := strconv.Atoi(args[1])
-	require.NoError(r, err)
-	require.GreaterOrEqual(r, numWithdrawals, 1)
+	// parse withdraw amount and number of withdraws
+	withdrawAmount := utils.ParseBigInt(r, args[0])
+	numWithdrawals := utils.ParseInt(r, args[1])
 
-	// Approve sufficient tokens for the Gateway contract
-	approvalAmount := new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil) // 1e20
-	tx, err := r.ETHZRC20.Approve(r.ZEVMAuth, r.GatewayZEVMAddr, approvalAmount)
-	require.NoError(r, err)
+	r.Logger.Print("starting stress test of %d withdrawals", numWithdrawals)
 
-	r.Logger.Print("Approving tokens for Gateway contract, tx hash: %s", tx.Hash().Hex())
-	r.WaitForTxReceiptOnZEVM(tx)
-
-	r.Logger.Print("Starting stress test with %d withdrawals", numWithdrawals)
-
-	// Store durations for reporting
-	withdrawDurations := []float64{}
-	withdrawDurationsLock := sync.Mutex{}
-
-	// Error group for concurrent withdrawals
+	// create a wait group to wait for all the withdrawals to complete
 	var eg errgroup.Group
 
+	// approve tokens for the Gateway contract
+	r.ApproveETHZRC20(r.GatewayZEVMAddr)
+
+	// send the withdrawals
 	for i := 0; i < numWithdrawals; i++ {
-		i := i // Capture loop variable
+		i := i
+		oldBalance, err := r.EVMClient.BalanceAt(r.Ctx, r.EVMAddress(), nil)
+		require.NoError(r, err)
 
-		// Generate a random payload for each withdrawal
-		payload := randomPayload(r)
+		tx := r.ETHWithdraw(r.EVMAddress(), withdrawAmount, gatewayzevm.RevertOptions{OnRevertGasLimit: big.NewInt(0)})
+		r.Logger.Print("index %d: starting withdraw, tx hash: %s", i, tx.Hash().Hex())
 
-		// Perform the withdrawal
-		eg.Go(func() error {
-			startTime := time.Now()
-
-			r.Logger.Print("Starting withdrawal #%d with payload: %x", i, payload)
-
-			tx := r.ETHWithdrawAndCall(
-				r.ZEVMAuth.From, // Sender address
-				withdrawalAmount,
-				[]byte(payload),
-				gatewayzevm.RevertOptions{OnRevertGasLimit: big.NewInt(0)},
-			)
-
-			r.Logger.Print("Withdrawal #%d initiated, tx hash: %s", i, tx.Hash().Hex())
-
-			// Wait for the cctx to be mined
-			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.CctxTimeout)
-			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
-				return fmt.Errorf(
-					"Withdrawal #%d failed: status=%s, message=%s, cctx index=%s",
-					i,
-					cctx.CctxStatus.Status,
-					cctx.CctxStatus.StatusMessage,
-					cctx.Index,
-				)
-			}
-
-			timeToComplete := time.Since(startTime)
-			r.Logger.Print("Withdrawal #%d succeeded in %s", i, timeToComplete.String())
-
-			// Record the duration
-			withdrawDurationsLock.Lock()
-			withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
-			withdrawDurationsLock.Unlock()
-
-			return nil
-		})
+		eg.Go(func() error { return monitorEtherWithdrawal(r, tx.Hash(), i, oldBalance, time.Now()) })
 	}
 
-	// Wait for all withdrawals to complete
-	err = eg.Wait()
-	require.NoError(r, err)
+	require.NoError(r, eg.Wait())
 
-	// Calculate and log latency statistics
-	desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
-	if descErr != nil {
-		r.Logger.Print("Failed to calculate latency report: %v", descErr)
-		return
+	r.Logger.Print("all withdrawals completed")
+}
+
+// monitorEtherWithdrawal monitors the withdrawal of ether, returns once the withdrawal is complete
+func monitorEtherWithdrawal(r *runner.E2ERunner, hash ethcommon.Hash, index int, oldBalance *big.Int, startTime time.Time) error {
+	cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, hash.Hex(), r.CctxClient, r.Logger, r.ReceiptTimeout)
+	if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
+		return fmt.Errorf(
+			"index %d: withdrawal cctx failed with status %s, message %s, cctx index %s",
+			index,
+			cctx.CctxStatus.Status,
+			cctx.CctxStatus.StatusMessage,
+			cctx.Index,
+		)
+	}
+	timeToComplete := time.Since(startTime)
+	r.Logger.Print("index %d: withdrawal cctx success in %s", index, timeToComplete.String())
+
+	newBalance, err := r.EVMClient.BalanceAt(r.Ctx, r.EVMAddress(), nil)
+	if err != nil {
+		return fmt.Errorf("index %d: failed to fetch new balance: %v", index, err)
 	}
 
-	r.Logger.Print("Latency Report:")
-	r.Logger.Print("Min:  %.2f", desc.Min)
-	r.Logger.Print("Max:  %.2f", desc.Max)
-	r.Logger.Print("Mean: %.2f", desc.Mean)
-	r.Logger.Print("Std:  %.2f", desc.Std)
-	for _, p := range desc.DescriptionPercentiles {
-		r.Logger.Print("P%.0f:  %.2f", p.Percentile, p.Value)
+	if newBalance.Uint64() <= oldBalance.Uint64() {
+		return fmt.Errorf("index %d: new balance is not greater than old balance", index)
 	}
 
-	r.Logger.Print("All withdrawals completed successfully")
+	return nil
 }
