@@ -21,61 +21,66 @@ import (
 func TestStressEtherWithdraw(r *runner.E2ERunner, args []string) {
 	require.Len(r, args, 2)
 
-	// parse withdraw amount and number of withdraws
+	// Parse withdrawal amount and number of withdrawals
 	withdrawalAmount := utils.ParseBigInt(r, args[0])
-
-	numWithdraws, err := strconv.Atoi(args[1])
+	numWithdrawals, err := strconv.Atoi(args[1])
 	require.NoError(r, err)
-	require.GreaterOrEqual(r, numWithdraws, 1)
+	require.GreaterOrEqual(r, numWithdrawals, 1)
 
-	tx, err := r.ETHZRC20.Approve(r.ZEVMAuth, r.ETHZRC20Addr, big.NewInt(1e18))
+	// Approve sufficient tokens for the Gateway contract
+	approvalAmount := new(big.Int).Exp(big.NewInt(10), big.NewInt(20), nil) // 1e20
+	tx, err := r.ETHZRC20.Approve(r.ZEVMAuth, r.GatewayZEVMAddr, approvalAmount)
 	require.NoError(r, err)
 
+	r.Logger.Print("Approving tokens for Gateway contract, tx hash: %s", tx.Hash().Hex())
 	r.WaitForTxReceiptOnZEVM(tx)
 
-	r.Logger.Print("starting stress test of %d withdraws", numWithdraws)
+	r.Logger.Print("Starting stress test with %d withdrawals", numWithdrawals)
 
-	// create a wait group to wait for all the withdraws to complete
-	var eg errgroup.Group
-
-	// store durations as float64 seconds like prometheus
+	// Store durations for reporting
 	withdrawDurations := []float64{}
 	withdrawDurationsLock := sync.Mutex{}
 
-	// send the withdraws
-	for i := 0; i < numWithdraws; i++ {
-		i := i
+	// Error group for concurrent withdrawals
+	var eg errgroup.Group
+
+	for i := 0; i < numWithdrawals; i++ {
+		i := i // Capture loop variable
 
 		// Generate a random payload for each withdrawal
 		payload := randomPayload(r)
 
-		r.Logger.Print("index %d: starting withdraw with payload", i)
-
+		// Perform the withdrawal
 		eg.Go(func() error {
 			startTime := time.Now()
 
-			// Perform the withdraw with payload
+			r.Logger.Print("Starting withdrawal #%d with payload: %x", i, payload)
+
 			tx := r.ETHWithdrawAndCall(
-				r.TestDAppV2EVMAddr,
+				r.ZEVMAuth.From, // Sender address
 				withdrawalAmount,
 				[]byte(payload),
 				gatewayzevm.RevertOptions{OnRevertGasLimit: big.NewInt(0)},
 			)
 
+			r.Logger.Print("Withdrawal #%d initiated, tx hash: %s", i, tx.Hash().Hex())
+
 			// Wait for the cctx to be mined
 			cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.CctxTimeout)
 			if cctx.CctxStatus.Status != crosschaintypes.CctxStatus_OutboundMined {
 				return fmt.Errorf(
-					"index %d: withdraw cctx failed with status %s, message %s, cctx index %s",
+					"Withdrawal #%d failed: status=%s, message=%s, cctx index=%s",
 					i,
 					cctx.CctxStatus.Status,
 					cctx.CctxStatus.StatusMessage,
 					cctx.Index,
 				)
 			}
-			timeToComplete := time.Since(startTime)
-			r.Logger.Print("index %d: withdraw cctx success in %s", i, timeToComplete.String())
 
+			timeToComplete := time.Since(startTime)
+			r.Logger.Print("Withdrawal #%d succeeded in %s", i, timeToComplete.String())
+
+			// Record the duration
 			withdrawDurationsLock.Lock()
 			withdrawDurations = append(withdrawDurations, timeToComplete.Seconds())
 			withdrawDurationsLock.Unlock()
@@ -84,23 +89,25 @@ func TestStressEtherWithdraw(r *runner.E2ERunner, args []string) {
 		})
 	}
 
+	// Wait for all withdrawals to complete
 	err = eg.Wait()
-
-	desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
-	if descErr != nil {
-		r.Logger.Print("❌ failed to calculate latency report: %v", descErr)
-	}
-
-	r.Logger.Print("Latency report:")
-	r.Logger.Print("min:  %.2f", desc.Min)
-	r.Logger.Print("max:  %.2f", desc.Max)
-	r.Logger.Print("mean: %.2f", desc.Mean)
-	r.Logger.Print("std:  %.2f", desc.Std)
-	for _, p := range desc.DescriptionPercentiles {
-		r.Logger.Print("p%.0f:  %.2f", p.Percentile, p.Value)
-	}
-
 	require.NoError(r, err)
 
-	r.Logger.Print("all withdraws completed")
+	// Calculate and log latency statistics
+	desc, descErr := stats.Describe(withdrawDurations, false, &[]float64{50.0, 75.0, 90.0, 95.0})
+	if descErr != nil {
+		r.Logger.Print("Failed to calculate latency report: %v", descErr)
+		return
+	}
+
+	r.Logger.Print("Latency Report:")
+	r.Logger.Print("Min:  %.2f", desc.Min)
+	r.Logger.Print("Max:  %.2f", desc.Max)
+	r.Logger.Print("Mean: %.2f", desc.Mean)
+	r.Logger.Print("Std:  %.2f", desc.Std)
+	for _, p := range desc.DescriptionPercentiles {
+		r.Logger.Print("P%.0f:  %.2f", p.Percentile, p.Value)
+	}
+
+	r.Logger.Print("All withdrawals completed successfully")
 }
