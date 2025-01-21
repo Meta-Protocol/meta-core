@@ -18,7 +18,7 @@ import (
 	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
 )
 
-func TestStressETHWithdrawAndCall(r *runner.E2ERunner, args []string) {
+func TestStressEtherDeposit(r *runner.E2ERunner, args []string) {
     require.Len(r, args, 2)
 
     withdrawalAmount := utils.ParseBigInt(r, args[0])
