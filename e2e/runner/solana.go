@@ -357,29 +357,23 @@ func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signatur
 
 	// wait for the transaction to be finalized
 	var out *rpc.GetTransactionResult
-	isConfirmed := false
-	for {
-		time.Sleep(5 * time.Second)
-		blockH, err := r.SolanaClient.GetBlockHeight(r.Ctx, rpc.CommitmentConfirmed)
-		if err != nil {
-			fmt.Println("block height err", err.Error())
-		} else {
-			fmt.Println("current block height", blockH)
-		}
-
-		out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{
-			Commitment: rpc.CommitmentConfirmed,
-		})
-		if err == nil {
-			isConfirmed = true
-			break
-		} else {
-			r.Logger.Info("error getting tx %s", err.Error())
-		}
+	time.Sleep(5 * time.Second)
+	blockH, err := r.SolanaClient.GetBlockHeight(r.Ctx, rpc.CommitmentConfirmed)
+	if err != nil {
+		fmt.Println("block height err", err.Error())
+	} else {
+		fmt.Println("current block height", blockH)
 	}
 
-	r.Logger.Info("broadcast once finished %s %t", sig, isConfirmed)
-	return sig, out, isConfirmed
+	out, err = r.SolanaClient.GetTransaction(r.Ctx, sig, &rpc.GetTransactionOpts{
+		Commitment: rpc.CommitmentConfirmed,
+	})
+	if err != nil {
+		r.Logger.Info("error getting tx %s", err.Error())
+	}
+
+	r.Logger.Info("broadcast once finished %s %t", sig, err == nil)
+	return sig, out, err == nil
 }
 
 // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
