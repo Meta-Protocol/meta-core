@@ -332,7 +332,7 @@ func (r *E2ERunner) DeploySPL(privateKey *solana.PrivateKey, whitelist bool) *so
 // BroadcastTxSync broadcasts a transaction and waits for it to be finalized
 func (r *E2ERunner) BroadcastTxSyncOnce(tx *solana.Transaction) (solana.Signature, *rpc.GetTransactionResult, bool) {
 	// broadcast the transaction
-	r.Logger.Info("Broadcast start")
+	r.Logger.Info("Broadcast once start")
 	maxRetries := uint(1)
 	sig, err := r.SolanaClient.SendTransactionWithOpts(r.Ctx, tx, rpc.TransactionOpts{
 		SkipPreflight:       true,
