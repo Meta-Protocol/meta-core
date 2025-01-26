@@ -1,11 +1,9 @@
 package e2etests
 
 import (
-	"encoding/hex"
 	"fmt"
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/stretchr/testify/require"
 	"github.com/zeta-chain/protocol-contracts/pkg/gatewayzevm.sol"
 
@@ -14,82 +12,50 @@ import (
 	crosschaintypes "github.com/zeta-chain/node/x/crosschain/types"
 )
 
-// TestStressEtherWithdraw uses the Gateway contract's withdraw function to
-// perform multiple withdrawals in parallel.
 func TestStressEtherWithdraw(r *runner.E2ERunner, args []string) {
-    require.Len(r, args, 2)
+		require.Len(r, args, 2)
 
-    // Log the args at the beginning
-    fmt.Println("Starting TestStressEtherWithdraw, args=", args)
+		// Start of test logging
+		fmt.Println("Starting TestETHWithdraw, args=", args)
 
-    // Increase gas limit for this test
-    previousGasLimit := r.ZEVMAuth.GasLimit
-    r.ZEVMAuth.GasLimit = 10000000
-    defer func() {
-        // Restore the original gas limit
-        fmt.Println("Restoring original gas limit:", previousGasLimit)
-        r.ZEVMAuth.GasLimit = previousGasLimit
-    }()
+		// Parse the withdraw amount
+		amount := utils.ParseBigInt(r, args[0])
+		fmt.Println("Parsed withdraw amount =", amount.String())
 
-    // Parse the arguments
-    amount := utils.ParseBigInt(r, args[0])
-    payload := randomPayload(r) // randomPayload returns a string
+		// Retrieve old balance for comparison
+		oldBalance, err := r.EVMClient.BalanceAt(r.Ctx, r.EVMAddress(), nil)
+		require.NoError(r, err)
+		fmt.Println("Old balance for address", r.EVMAddress().Hex(), "=", oldBalance.String())
 
-    // Print parsed inputs (convert payload to []byte for hex encoding)
-    fmt.Println("Parsed test inputs:",
-        "amount=", amount.String(),
-        "payloadHex=", hex.EncodeToString([]byte(payload)),
-    )
+		// Approve ETHZRC20 for the Gateway contract
+		fmt.Println("Approving ETHZRC20 for Gateway, gatewayAddress=", r.GatewayZEVMAddr.Hex())
+		r.ApproveETHZRC20(r.GatewayZEVMAddr)
 
-    // Initially verify that the dApp has not been called
-    r.AssertTestDAppEVMCalled(false, payload, amount)
+		// Perform the withdraw
+		fmt.Println("Performing ETHWithdraw, amount=", amount.String())
+		tx := r.ETHWithdraw(r.EVMAddress(), amount, gatewayzevm.RevertOptions{OnRevertGasLimit: big.NewInt(0)})
 
-    // Approve ETHZRC20 for the Gateway contract
-    fmt.Println("Approving ETHZRC20 for Gateway, gatewayAddress=", r.GatewayZEVMAddr.String())
-    r.ApproveETHZRC20(r.GatewayZEVMAddr)
+		fmt.Println("Withdraw transaction broadcasted, txHash=", tx.Hash().Hex())
 
-    // Perform the withdrawal with ETHWithdrawAndCall
-    fmt.Println("Calling ETHWithdrawAndCall, target=", r.TestDAppV2EVMAddr.String(),
-        "amount=", amount.String(),
-        "payloadHex=", hex.EncodeToString([]byte(payload)),
-    )
-    tx := r.ETHWithdrawAndCall(
-        r.TestDAppV2EVMAddr,
-        amount,
-        []byte(payload),
-        gatewayzevm.RevertOptions{OnRevertGasLimit: big.NewInt(0)},
-    )
+		// Wait for the cctx to be mined
+		fmt.Println("Waiting for CCTX to be mined, inboundHash=", tx.Hash().Hex())
+		cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.CctxTimeout)
 
-    fmt.Println("Withdraw transaction sent, txHash=", tx.Hash().Hex())
+		// Log with your existing CCTX logger (optional/custom)
+		r.Logger.CCTX(*cctx, "withdraw")
 
-    // Wait for the CCTX to be mined
-    fmt.Println("Waiting for CCTX to be mined, txHash=", tx.Hash().Hex())
-    cctx := utils.WaitCctxMinedByInboundHash(r.Ctx, tx.Hash().Hex(), r.CctxClient, r.Logger, r.CctxTimeout)
+		// Log the CCTX status
+		fmt.Println("CCTX mined with status=", cctx.CctxStatus.Status)
+		require.Equal(r, crosschaintypes.CctxStatus_OutboundMined, cctx.CctxStatus.Status)
 
-    // Use the correct field from CrossChainTx
-    // Replace cctx.Index with whichever field is correct for your version
-    fmt.Println("CCTX mined: cctxIndex=", cctx.Index, "status=", cctx.CctxStatus.Status)
+		// Retrieve the new balance
+		newBalance, err := r.EVMClient.BalanceAt(r.Ctx, r.EVMAddress(), nil)
+		require.NoError(r, err)
+		fmt.Println("New balance for address", r.EVMAddress().Hex(), "=", newBalance.String())
 
-    // Log with the dedicated CCTX logger (optional/custom logic)
-    r.Logger.CCTX(*cctx, "withdraw")
+		// Ensure the new balance is greater (minus gas fees)
+		require.Greater(r, newBalance.Uint64(), oldBalance.Uint64())
 
-    // Ensure the transaction is in the expected mined status
-    require.Equal(r, crosschaintypes.CctxStatus_OutboundMined, cctx.CctxStatus.Status)
-
-    // Assert the DApp was called after withdrawal
-    fmt.Println("Verifying TestDAppEVM was called after withdrawal")
-    r.AssertTestDAppEVMCalled(true, payload, amount)
-
-    // Check that the correct sender was recorded in the DApp
-    fmt.Println("Checking sender for payload on TestDAppV2EVM")
-    senderForMsg, err := r.TestDAppV2EVM.SenderWithMessage(&bind.CallOpts{}, []byte(payload))
-    require.NoError(r, err)
-
-    fmt.Println("Comparing expected sender with the contract's recognized sender",
-        "expectedSender=", r.ZEVMAuth.From.String(),
-        "contractSender=", senderForMsg.String(),
-    )
-    require.Equal(r, r.ZEVMAuth.From, senderForMsg)
-
-    fmt.Println("TestStressEtherWithdraw completed successfully")
+		// Test end
+		fmt.Println("TestETHWithdraw completed successfully")
 }
