@@ -70,7 +70,7 @@ func TestStressEtherWithdraw(r *runner.E2ERunner, args []string) {
 
     // Use the correct field from CrossChainTx (replace CctxIndex if needed)
     r.Logger.Info("CCTX mined",
-        "cctxIndex", cctx.CctxIndex, // Adjust this if your struct uses a different field
+        "cctxIndex", cctx.Index, // Adjust this if your struct uses a different field
         "status", cctx.CctxStatus.Status,
     )
 
