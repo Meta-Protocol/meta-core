@@ -122,6 +122,7 @@ jobs:
       TON_TESTS: ${{ steps.matrix-conditionals.outputs.TON_TESTS }}
       LEGACY_TESTS: ${{ steps.matrix-conditionals.outputs.LEGACY_TESTS }}
       ENABLE_MONITORING: ${{ steps.matrix-conditionals.outputs.ENABLE_MONITORING }}
+      TWICE_TESTS: ${{ steps.matrix-conditionals.outputs.TWICE_TESTS }}
     steps:
       # use api rather than event context to avoid race conditions (label added after push)
       - id: matrix-conditionals
@@ -154,9 +155,11 @@ jobs:
               core.setOutput('TON_TESTS', labels.includes('TON_TESTS'));
               core.setOutput('LEGACY_TESTS', labels.includes('LEGACY_TESTS'));
               core.setOutput('ENABLE_MONITORING', labels.includes('ENABLE_MONITORING'));
+              core.setOutput('TWICE_TESTS', labels.includes('TWICE_TESTS'));
             } else if (context.eventName === 'merge_group') {
               // default mergequeue tests
               core.setOutput('DEFAULT_TESTS', true);
+              core.setOutput('TWICE_TESTS', true);
               core.setOutput('UPGRADE_LIGHT_TESTS', true);
 
               // conditional tests based on PR labels
@@ -221,6 +224,7 @@ jobs:
         include:
           - make-target: "start-e2e-test"
             runs-on: ubuntu-20.04
+            run-twice: ${{ needs.matrix-conditionals.outputs.TWICE_TESTS == 'true' }}
             run: ${{ needs.matrix-conditionals.outputs.DEFAULT_TESTS == 'true' }}
           - make-target: "start-e2e-consensus-test"
             runs-on: ubuntu-20.04
@@ -264,6 +268,7 @@ jobs:
       make-target: ${{ matrix.make-target }}
       runs-on: ${{ matrix.runs-on}}
       run: ${{ matrix.run }}
+      run-twice: ${{ matrix.run-twice || false }}
       timeout-minutes: "${{ matrix.timeout-minutes || 25 }}"
       zetanode-image: ${{ needs.build-zetanode.outputs.image }}
       enable-monitoring: ${{ needs.matrix-conditionals.outputs.ENABLE_MONITORING == 'true' }}
