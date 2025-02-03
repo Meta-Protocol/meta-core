@@ -152,6 +152,8 @@ func TestAvgFeeRateBlock828440Errors(t *testing.T) {
 }
 
 func Test_GetInboundVoteFromBtcEvent(t *testing.T) {
+	r := sample.Rand()
+
 	// can use any bitcoin chain for testing
 	chain := chains.BitcoinMainnet
 
@@ -168,7 +170,7 @@ func Test_GetInboundVoteFromBtcEvent(t *testing.T) {
 		{
 			name: "should return vote for standard memo",
 			event: &observer.BTCInboundEvent{
-				FromAddress: sample.BtcAddressP2WPKH(t, &chaincfg.MainNetParams),
+				FromAddress: sample.BTCAddressP2WPKH(t, r, &chaincfg.MainNetParams).String(),
 				// a deposit and call
 				MemoBytes: testutil.HexToBytes(
 					t,
@@ -289,7 +291,7 @@ func TestGetBtcEvent(t *testing.T) {
 	net := &chaincfg.MainNetParams
 
 	// fee rate of above tx is 28 sat/vB
-	depositorFee := common.DepositorFee(28 * clientcommon.BTCOutboundGasPriceMultiplier)
+	depositorFee := common.DepositorFee(28 * clientcommon.BTCGasPriceMultiplierFeeCharge)
 	feeCalculator := mockDepositFeeCalculator(depositorFee, nil)
 
 	// expected result
@@ -647,7 +649,7 @@ func TestGetBtcEventErrors(t *testing.T) {
 	blockNumber := uint64(835640)
 
 	// fee rate of above tx is 28 sat/vB
-	depositorFee := common.DepositorFee(28 * clientcommon.BTCOutboundGasPriceMultiplier)
+	depositorFee := common.DepositorFee(28 * clientcommon.BTCGasPriceMultiplierFeeCharge)
 	feeCalculator := mockDepositFeeCalculator(depositorFee, nil)
 
 	t.Run("should return error if RPC client fails to get raw tx", func(t *testing.T) {

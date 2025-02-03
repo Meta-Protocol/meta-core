@@ -29,6 +29,13 @@ type client interface {
 	GetTransaction(ctx context.Context, hash *hash.Hash) (*types.GetTransactionResult, error)
 	GetRawTransaction(ctx context.Context, hash *hash.Hash) (*btcutil.Tx, error)
 	GetRawTransactionVerbose(ctx context.Context, hash *hash.Hash) (*types.TxRawResult, error)
+	GetMempoolEntry(ctx context.Context, txHash string) (*types.GetMempoolEntryResult, error)
+	GetRawMempool(ctx context.Context) ([]*hash.Hash, error)
+	GetTotalMempoolParentsSizeNFees(
+		ctx context.Context,
+		childHash string,
+		timeout time.Duration,
+	) (int64, float64, int64, int64, error)
 
 	GetRawTransactionResult(
 		ctx context.Context,
@@ -45,6 +52,7 @@ type client interface {
 
 	SendRawTransaction(ctx context.Context, tx *wire.MsgTx, allowHighFees bool) (*hash.Hash, error)
 
+	GetEstimatedFeeRate(ctx context.Context, confTarget int64) (int64, error)
 	GetTransactionFeeAndRate(ctx context.Context, tx *types.TxRawResult) (int64, int64, error)
 	EstimateSmartFee(
 		ctx context.Context,

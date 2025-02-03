@@ -16,6 +16,10 @@
 * [3368](https://github.com/zeta-chain/node/pull/3368) - cli command to fetch inbound ballot from inbound hash added to zetatools.
 * [3425](https://github.com/zeta-chain/node/pull/3425) - enable inscription parsing on Bitcoin mainnet
 
+### Features
+
+* [3396](https://github.com/zeta-chain/node/pull/3396) - add support for Bitcoin RBF (Replace-By-Fee) in zetaclient
+
 ### Refactor
 
 * [3332](https://github.com/zeta-chain/node/pull/3332) - implement orchestrator V2. Move BTC observer-signer to V2
