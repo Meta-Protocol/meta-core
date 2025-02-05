@@ -2,11 +2,13 @@ package signer
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
 	"cosmossdk.io/errors"
+	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/gagliardetto/solana-go"
 	"github.com/gagliardetto/solana-go/programs/token"
 	"github.com/gagliardetto/solana-go/rpc"
@@ -142,13 +144,23 @@ func (signer *Signer) TryProcessOutbound(
 		tx = whitelistTx
 
 	case coin.CoinType_Gas:
-		withdrawTx, err := signer.prepareWithdrawTx(ctx, cctx, height, logger)
-		if err != nil {
-			logger.Error().Err(err).Msgf("TryProcessOutbound: Fail to sign withdraw outbound")
-			return
-		}
+		if cctx.InboundParams.IsCrossChainCall {
+			executeTx, err := signer.prepareExecuteTx(ctx, cctx, height, logger)
+			if err != nil {
+				logger.Error().Err(err).Msgf("TryProcessOutbound: Fail to sign execute outbound")
+				return
+			}
 
-		tx = withdrawTx
+			tx = executeTx
+		} else {
+			withdrawTx, err := signer.prepareWithdrawTx(ctx, cctx, height, logger)
+			if err != nil {
+				logger.Error().Err(err).Msgf("TryProcessOutbound: Fail to sign withdraw outbound")
+				return
+			}
+
+			tx = withdrawTx
+		}
 
 	case coin.CoinType_ERC20:
 		withdrawSPLTx, err := signer.prepareWithdrawSPLTx(ctx, cctx, height, logger)
@@ -267,6 +279,69 @@ func (signer *Signer) prepareWithdrawTx(
 
 	// sign the withdraw transaction by relayer key
 	tx, err := signer.signWithdrawTx(ctx, *msg)
+	if err != nil {
+		return nil, err
+	}
+
+	return tx, nil
+}
+
+func (signer *Signer) prepareExecuteTx(
+	ctx context.Context,
+	cctx *types.CrossChainTx,
+	height uint64,
+	logger zerolog.Logger,
+) (*solana.Transaction, error) {
+	params := cctx.GetCurrentOutboundParam()
+	// compliance check
+	cancelTx := compliance.IsCctxRestricted(cctx)
+	if cancelTx {
+		compliance.PrintComplianceLog(
+			logger,
+			signer.Logger().Compliance,
+			true,
+			signer.Chain().ChainId,
+			cctx.Index,
+			cctx.InboundParams.Sender,
+			params.Receiver,
+			"SOL",
+		)
+	}
+
+	message, err := hex.DecodeString(cctx.RelayedMessage)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := contracts.DecodeMsg(message)
+	if err != nil {
+		return nil, err
+	}
+
+	remainingAccounts := []*solana.AccountMeta{}
+	for _, a := range msg.Accounts {
+		remainingAccounts = append(remainingAccounts, &solana.AccountMeta{
+			PublicKey:  solana.PublicKey(a.PublicKey),
+			IsWritable: a.IsWritable,
+		})
+	}
+
+	// sign gateway withdraw message by TSS
+	sender := ethcommon.HexToAddress(cctx.InboundParams.Sender)
+	msgExecute, err := signer.createAndSignMsgExecute(
+		ctx,
+		params,
+		height,
+		sender,
+		msg.Data,
+		remainingAccounts,
+		cancelTx,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// sign the withdraw transaction by relayer key
+	tx, err := signer.signExecuteTx(ctx, *msgExecute)
 	if err != nil {
 		return nil, err
 	}
