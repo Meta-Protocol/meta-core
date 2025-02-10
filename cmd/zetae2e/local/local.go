@@ -244,6 +244,10 @@ func localE2ETest(cmd *cobra.Command, _ []string) {
 				conf.Contracts.Solana.GatewayProgramID.String(),
 				conf.AdditionalAccounts.UserSolana.SolanaPrivateKey.String(),
 			)
+
+			deployerRunner.UpgradeGatewayContract(
+				conf.AdditionalAccounts.UserSolana.SolanaPrivateKey.String(),
+			)
 		}
 
 		deployerRunner.SetupZEVMProtocolContracts()

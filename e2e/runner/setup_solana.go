@@ -1,10 +1,14 @@
 package runner
 
 import (
+	"encoding/binary"
+	"os"
+	"path/filepath"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/gagliardetto/solana-go"
+	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/near/borsh-go"
 	"github.com/pkg/errors"
@@ -38,7 +42,7 @@ func (r *E2ERunner) SetupSolana(gatewayID, deployerPrivateKey string) {
 	require.NoError(r, err)
 	bal, err := r.SolanaClient.GetBalance(r.Ctx, privkey.PublicKey(), rpc.CommitmentConfirmed)
 	require.NoError(r, err)
-	r.Logger.Info("deployer address: %s, balance: %f SOL", privkey.PublicKey().String(), float64(bal.Value)/1e9)
+	r.Logger.Print("deployer address: %s, balance: %f SOL %s", privkey.PublicKey().String(), float64(bal.Value)/1e9, privkey.String())
 
 	// compute the gateway PDA address
 	pdaComputed := r.ComputePdaAddress()
