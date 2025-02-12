@@ -16,4 +16,6 @@ type PdaInfo struct {
 
 	// ChainId is the Solana chain id
 	ChainID uint64
+
+	DepositPaused bool
 }

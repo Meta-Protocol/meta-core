@@ -1,14 +1,10 @@
 package runner
 
 import (
-	"encoding/binary"
-	"os"
-	"path/filepath"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
 	"github.com/gagliardetto/solana-go"
-	"github.com/gagliardetto/solana-go/programs/system"
 	"github.com/gagliardetto/solana-go/rpc"
 	"github.com/near/borsh-go"
 	"github.com/pkg/errors"
@@ -64,12 +60,14 @@ func (r *E2ERunner) SetupSolana(gatewayID, deployerPrivateKey string) {
 	})
 	require.NoError(r, err)
 
+	r.Logger.Print("Waiting for 30s for upgrade to complete")
+
 	// create and sign the transaction
 	signedTx := r.CreateSignedTransaction([]solana.Instruction{&inst}, privkey, []solana.PrivateKey{})
 
 	// broadcast the transaction and wait for finalization
 	_, out := r.BroadcastTxSync(signedTx)
-	r.Logger.Info("initialize logs: %v", out.Meta.LogMessages)
+	r.Logger.Print("initialize logs: %v", out.Meta.LogMessages)
 
 	// retrieve the PDA account info
 	pdaInfo, err := r.SolanaClient.GetAccountInfoWithOpts(r.Ctx, pdaComputed, &rpc.GetAccountInfoOpts{
@@ -83,6 +81,8 @@ func (r *E2ERunner) SetupSolana(gatewayID, deployerPrivateKey string) {
 	require.NoError(r, err)
 	tssAddress := ethcommon.BytesToAddress(pda.TssAddress[:])
 
+	r.Logger.Print("PDA info: %d %d %v ", pda.Nonce, pda.ChainID, pda.DepositPaused)
+
 	// check the TSS address
 	require.Equal(r, r.TSSAddress, tssAddress, "TSS address mismatch")
 
@@ -93,6 +93,9 @@ func (r *E2ERunner) SetupSolana(gatewayID, deployerPrivateKey string) {
 
 	err = r.ensureSolanaChainParams()
 	require.NoError(r, err)
+
+	r.Logger.Print("PdaComputed  %s", pdaComputed)
+	r.Logger.Print("GatewayProgram ID %s", r.GatewayProgram)
 
 	// deploy test spl
 	mintAccount := r.DeploySPL(&privkey, true)

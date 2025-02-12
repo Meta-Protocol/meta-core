@@ -12,7 +12,8 @@ sleep 5
 solana airdrop 1000
 solana airdrop 1000 37yGiHAnLvWZUNVwu9esp74YQFqxU1qHCbABkDvRddUQ
 solana program deploy gateway.so
-
-
 # leave some time for debug if validator exits due to errors
 sleep 1000
+
+
+#solana program deploy gateway-new.so --program-id 94U5AHQMKkV5txNJ17QPXWoh474PheGou6cNP2FEuL1d

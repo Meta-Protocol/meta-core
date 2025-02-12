@@ -244,10 +244,6 @@ func localE2ETest(cmd *cobra.Command, _ []string) {
 				conf.Contracts.Solana.GatewayProgramID.String(),
 				conf.AdditionalAccounts.UserSolana.SolanaPrivateKey.String(),
 			)
-
-			deployerRunner.UpgradeGatewayContract(
-				conf.AdditionalAccounts.UserSolana.SolanaPrivateKey.String(),
-			)
 		}
 
 		deployerRunner.SetupZEVMProtocolContracts()
@@ -295,6 +291,7 @@ func localE2ETest(cmd *cobra.Command, _ []string) {
 
 	// always mint ERC20 before every test execution
 	deployerRunner.MintERC20OnEVM(1e10)
+	time.Sleep(5 * time.Hour)
 
 	// run tests
 	var eg errgroup.Group

@@ -328,6 +328,8 @@ func (r *E2ERunner) DeploySPL(privateKey *solana.PrivateKey, whitelist bool) *so
 		_, out := r.BroadcastTxSync(signedTx)
 		r.Logger.Info("whitelist spl mint logs: %v", out.Meta.LogMessages)
 
+		r.Logger.Print("Whitelisted PDA %s", whitelistEntryPDA)
+
 		whitelistEntryInfo, err = r.SolanaClient.GetAccountInfoWithOpts(
 			r.Ctx,
 			whitelistEntryPDA,
