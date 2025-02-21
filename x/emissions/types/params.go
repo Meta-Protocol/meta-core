@@ -16,6 +16,7 @@ func NewParams() Params {
 		ObserverSlashAmount:         ObserverSlashAmount,
 		BallotMaturityBlocks:        int64(BallotMaturityBlocks),
 		BlockRewardAmount:           BlockReward,
+		PendingBallotsBufferBlocks:  PendingBallotsBufferBlocks,
 	}
 }
 
@@ -39,6 +40,9 @@ func (p Params) Validate() error {
 		return err
 	}
 	if err := validateBlockRewardsAmount(p.BlockRewardAmount); err != nil {
+		return err
+	}
+	if err := validatePendingBallotsBufferBlocks(p.PendingBallotsBufferBlocks); err != nil {
 		return err
 	}
 	return validateObserverSlashAmount(p.ObserverSlashAmount)
@@ -122,6 +126,19 @@ func validateBallotMaturityBlocks(i interface{}) error {
 		return fmt.Errorf("ballot maturity types must not be negative")
 	}
 
+	return nil
+}
+
+func validatePendingBallotsBufferBlocks(i interface{}) error {
+	v, ok := i.(int64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+
+	// pending ballots buffer blocks can be 0 to delete pending ballots immediately
+	if v < 0 {
+		return fmt.Errorf("pending ballots buffer blocks must not be negative")
+	}
 	return nil
 }
 
