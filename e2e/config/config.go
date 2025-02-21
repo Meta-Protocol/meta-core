@@ -122,12 +122,20 @@ type Contracts struct {
 	EVM    EVM    `yaml:"evm"`
 	ZEVM   ZEVM   `yaml:"zevm"`
 	Solana Solana `yaml:"solana"`
+	Sui    Sui    `yaml:"sui"`
 }
 
 // Solana contains the addresses of predeployed contracts and accounts on the Solana chain
 type Solana struct {
 	GatewayProgramID DoubleQuotedString `yaml:"gateway_program_id"`
 	SPLAddr          DoubleQuotedString `yaml:"spl"`
+}
+
+// Sui contains the addresses of predeployed contracts on the Sui chain
+type Sui struct {
+	GatewayPackageID DoubleQuotedString `yaml:"gateway_package_id"`
+	GatewayObjectID  DoubleQuotedString `yaml:"gateway_object_id"`
+	CoinType         DoubleQuotedString `yaml:"coin_type"`
 }
 
 // EVM contains the addresses of predeployed contracts on the EVM chain
@@ -151,6 +159,7 @@ type ZEVM struct {
 	SOLZRC20Addr       DoubleQuotedString `yaml:"sol_zrc20"`
 	SPLZRC20Addr       DoubleQuotedString `yaml:"spl_zrc20"`
 	TONZRC20Addr       DoubleQuotedString `yaml:"ton_zrc20"`
+	SUIZRC20Addr       DoubleQuotedString `yaml:"sui_zrc20"`
 	UniswapFactoryAddr DoubleQuotedString `yaml:"uniswap_factory"`
 	UniswapRouterAddr  DoubleQuotedString `yaml:"uniswap_router"`
 	ConnectorZEVMAddr  DoubleQuotedString `yaml:"connector_zevm"`
@@ -402,7 +411,9 @@ func (a Account) PrivateKey() (*ecdsa.PrivateKey, error) {
 	return crypto.HexToECDSA(a.RawPrivateKey.String())
 }
 
-// SuiAddress derives the blake2b hash from the private key
+// SuiSigner derives the blake2b hash from the private key
+// TODO: add a dedicated private key / address pair for Sui so it can be used with a regular account from a wallet
+// for a localnet test this works
 func (a Account) SuiSigner() (*sui_utils.SignerSecp256k1, error) {
 	privateKeyBytes, err := hex.DecodeString(a.RawPrivateKey.String())
 	if err != nil {

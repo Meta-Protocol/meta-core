@@ -117,6 +117,14 @@ func setContractsFromConfig(r *runner.E2ERunner, conf config.Config) error {
 		r.SPLAddr = solana.MustPublicKeyFromBase58(c.String())
 	}
 
+	// set Sui contracts
+	if c := conf.Contracts.Sui.GatewayPackageID; c != "" {
+		r.GatewayPackageID = c.String()
+	}
+	if c := conf.Contracts.Sui.GatewayObjectID; c != "" {
+		r.GatewayObjectID = c.String()
+	}
+
 	evmChainID, err := r.EVMClient.ChainID(r.Ctx)
 	require.NoError(r, err, "get evm chain ID")
 	evmChainParams := chainParamsByChainID(chainParams, evmChainID.Int64())
@@ -219,6 +227,17 @@ func setContractsFromConfig(r *runner.E2ERunner, conf config.Config) error {
 			return fmt.Errorf("invalid TONZRC20Addr: %w", err)
 		}
 		r.TONZRC20, err = zrc20.NewZRC20(r.TONZRC20Addr, r.ZEVMClient)
+		if err != nil {
+			return err
+		}
+	}
+
+	if c := conf.Contracts.ZEVM.SUIZRC20Addr; c != "" {
+		r.SUIZRC20Addr, err = c.AsEVMAddress()
+		if err != nil {
+			return fmt.Errorf("invalid SUIZRC20Addr: %w", err)
+		}
+		r.SUIZRC20, err = zrc20.NewZRC20(r.SUIZRC20Addr, r.ZEVMClient)
 		if err != nil {
 			return err
 		}
