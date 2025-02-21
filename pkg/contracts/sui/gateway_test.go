@@ -15,6 +15,7 @@ func TestParseEvent(t *testing.T) {
 	// stubs
 	const (
 		packageID = "0x3e9fb7c01ef0d97911ccfec79306d9de2d58daa996bd3469da0f6d640cc443cf"
+		gatewayID = "0x444fb7c01ef0d97911ccfec79306d9de2d58daa996bd3469da0f6d640cc443aa"
 		sender    = "0x70386a9a912d9f7a603263abfbd8faae861df0ee5f8e2dbdf731fbd159f10e52"
 		txHash    = "HjxLMxMXNz8YfUc2qT4e4CrogKvGeHRbDW7Arr6ntzqq"
 	)
@@ -23,7 +24,7 @@ func TestParseEvent(t *testing.T) {
 		return fmt.Sprintf("%s::%s::%s", packageID, moduleName, t)
 	}
 
-	gw := NewGateway(packageID)
+	gw := NewGateway(packageID, gatewayID)
 
 	receiverAlice := sample.EthAddress()
 	receiverBob := sample.EthAddress()
@@ -52,8 +53,6 @@ func TestParseEvent(t *testing.T) {
 				assert.Equal(t, txHash, out.TxHash)
 				assert.Equal(t, Deposit, out.EventType)
 				assert.Equal(t, uint64(0), out.EventIndex)
-
-				assert.True(t, out.IsInbound())
 
 				inbound, err := out.Inbound()
 				require.NoError(t, err)
@@ -85,8 +84,6 @@ func TestParseEvent(t *testing.T) {
 				assert.Equal(t, DepositAndCall, out.EventType)
 				assert.Equal(t, uint64(1), out.EventIndex)
 
-				assert.True(t, out.IsInbound())
-
 				inbound, err := out.Inbound()
 				require.NoError(t, err)
 
@@ -117,8 +114,6 @@ func TestParseEvent(t *testing.T) {
 				assert.Equal(t, txHash, out.TxHash)
 				assert.Equal(t, DepositAndCall, out.EventType)
 				assert.Equal(t, uint64(1), out.EventIndex)
-
-				assert.True(t, out.IsInbound())
 
 				inbound, err := out.Inbound()
 				require.NoError(t, err)
