@@ -106,10 +106,20 @@ func (ob *Observer) ObserveGatewayDeposit(ctx context.Context, startBlock, toBlo
 
 		msg := ob.newDepositInboundVote(event)
 
-		ob.Logger().Inbound.Info().
-			Msgf("ObserveGateway: Deposit inbound detected on chain %d tx %s block %d from %s value %s message %s",
-				ob.Chain().
-					ChainId, event.Raw.TxHash.Hex(), event.Raw.BlockNumber, event.Sender.Hex(), event.Amount.String(), hex.EncodeToString(event.Payload))
+		// skip early observed inbound that is not eligible for fast confirmation
+		if msg.ConfirmationMode == types.ConfirmationMode_FAST {
+			eligible, err := ob.IsInboundEligibleForFastConfirmation(ctx, &msg)
+			if err != nil {
+				return lastScanned - 1, errors.Wrapf(
+					err,
+					"unable to determine inbound fast confirmation eligibility for tx %s",
+					event.Raw.TxHash,
+				)
+			}
+			if !eligible {
+				continue
+			}
+		}
 
 		_, err = ob.PostVoteInbound(ctx, &msg, zetacore.PostVoteInboundExecutionGasLimit)
 		if err != nil {
@@ -187,6 +197,9 @@ func (ob *Observer) newDepositInboundVote(event *gatewayevm.GatewayEVMDeposited)
 		isCrossChainCall = true
 	}
 
+	// determine confirmation mode
+	confirmationMode := ob.GetInboundConfirmationMode(event.Raw.BlockNumber)
+
 	return *types.NewMsgVoteInbound(
 		ob.ZetacoreClient().GetKeys().GetOperatorAddress().String(),
 		event.Sender.Hex(),
@@ -205,7 +218,7 @@ func (ob *Observer) newDepositInboundVote(event *gatewayevm.GatewayEVMDeposited)
 		types.ProtocolContractVersion_V2,
 		false, // currently not relevant since calls are not arbitrary
 		types.InboundStatus_SUCCESS,
-		types.ConfirmationMode_SAFE,
+		confirmationMode,
 		types.WithEVMRevertOptions(event.RevertOptions),
 		types.WithCrossChainCall(isCrossChainCall),
 	)
