@@ -59832,6 +59832,11 @@ definitions:
       confirmation_params:
         $ref: '#/definitions/observerConfirmationParams'
         title: Advanced confirmation parameters for chain to support fast observation
+      skip_block_scan:
+        type: boolean
+        description: |-
+          Skip actions that require scanning the contents of each block.
+          The main thing this disables is transfers directly to the TSS address.
   observerChainParamsList:
     type: object
     properties:
