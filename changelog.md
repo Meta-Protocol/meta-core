@@ -39,6 +39,7 @@
 
 * [3430](https://github.com/zeta-chain/node/pull/3430) - add simulation test for MsgWithDrawEmission
 * [3503](https://github.com/zeta-chain/node/pull/3503) - add check in e2e test to ensure deletion of stale ballots
+* [3560](https://github.com/zeta-chain/node/pull/3560) - initialize Sui E2E deposit tests
 
 ## v28.0.0
 
