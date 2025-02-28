@@ -420,6 +420,7 @@ func localE2ETest(cmd *cobra.Command, _ []string) {
 			e2etests.TestSPLWithdrawAndCreateReceiverAtaName,
 			e2etests.TestSolanaWhitelistSPLName,
 		}
+
 		eg.Go(solanaTestRoutine(conf, deployerRunner, verbose, solanaTests...))
 	}
 

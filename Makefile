@@ -352,10 +352,11 @@ zetanode-upgrade: e2e-images
 .PHONY: zetanode-upgrade
 endif
 
-start-upgrade-test: zetanode-upgrade
+start-upgrade-test: zetanode-upgrade solana
 	@echo "--> Starting upgrade test"
 	export LOCALNET_MODE=upgrade && \
 	export UPGRADE_HEIGHT=225 && \
+	export E2E_ARGS="--test-solana" && \
 	cd contrib/localnet/ && $(DOCKER_COMPOSE) --profile upgrade -f docker-compose-upgrade.yml up -d
 
 start-upgrade-test-light: zetanode-upgrade
