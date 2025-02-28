@@ -246,9 +246,7 @@ then
 # solana tester
   address=$(yq -r '.additional_accounts.user_solana.bech32_address' /root/config.yml)
   zetacored add-genesis-account "$address" 100000000000000000000000000azeta
-# sui tester
-  address=$(yq -r '.additional_accounts.user_sui.bech32_address' /root/config.yml)
-  zetacored add-genesis-account "$address" 100000000000000000000000000azeta# migration tester
+# migration tester
   address=$(yq -r '.additional_accounts.user_migration.bech32_address' /root/config.yml)
   zetacored add-genesis-account "$address" 100000000000000000000000000azeta
 # precompile tester
@@ -268,6 +266,9 @@ then
   zetacored add-genesis-account "$address" 100000000000000000000000000azeta
 # emissions withdraw tester
   address=$(yq -r '.additional_accounts.user_emissions_withdraw.bech32_address' /root/config.yml)
+  zetacored add-genesis-account "$address" 100000000000000000000000000azeta
+# sui tester
+  address=$(yq -r '.additional_accounts.user_sui.bech32_address' /root/config.yml)
   zetacored add-genesis-account "$address" 100000000000000000000000000azeta
 
 # 3. Copy the genesis.json to all the nodes .And use it to create a gentx for every node
